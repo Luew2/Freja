@@ -1,71 +1,98 @@
 import cv2
+import time
 import base64
-import openai
-from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
+from openai import OpenAI
+import pyttsx3
+import re
 
-openai.api_key = ''
-https://onetimesecret.com/secret/7ki2wu2qwuescfdj4e3wot0kd88ppqb
+# Initialize OpenAI client
+client = OpenAI(api_key='')
+engine = pyttsx3.init()
 def capture_image():
     # Initialize webcam
-    cap = cv2.VideoCapture(0)
-
-    # Capture frame-by-frame
-    ret, frame = cap.read()
-
-    ret, buffer = cv2.imencode('.jpg', frame)
-    base64_image = base64.b64encode(buffer)
+    cap = cv2.VideoCapture(-1)
     
+    # Capture multiple frames to ensure a clear image
+    for _ in range(10):  # Capture 10 frames
+        ret, frame = cap.read()
+        if not ret:
+            print("Failed to capture image")
+            cap.release()
+            return None
+        
+        # Display the current frame
+        cv2.imshow('Captured Image', frame)
+        cv2.waitKey(10)  # This line is necessary to update the imshow window
+    
+    # Release the camera
     cap.release()
+    
+    # Display the final captured frame
+    cv2.imshow('Final Captured Image', frame)
+    cv2.waitKey(10)
+    
+    # Encode the image to base64
+    ret, buffer = cv2.imencode('.jpg', frame)
+    base64_image = base64.b64encode(buffer).decode('utf-8')
     return base64_image
 
-def analyze_image_and_generate_prompt(base64_image):
-    # Create the prompt with the image for analysis
-    prompt = ChatPromptTemplate.from_template(
-        "Analyze the following image and describe what is happening from the dogs perspective, if there is no dog say Freja is not here: {image}"
-    )
-    
-    # Send the prompt to OpenAI for analysis
-    response = openai.Completion.create(
-        engine="davinci-codex",
-        prompt=prompt.format(image=base64_image),
-        max_tokens=150
-    )
-
-    # Extract the analysis from the response
-    analysis = response.choices[0].text.strip()
-
-    # Create a second prompt pretending to be the dog in the image
-    dog_prompt = ChatPromptTemplate.from_template(
-        f"You are the dog Freja in the image, act like her and say what she is thinking. If she is not there return with no response {analysis}"
-    )
-    
-    return dog_prompt
-
-
-def freja_response(dog_prompt):
-    # Send the prompt to OpenAI for response
-    freja_thoughts_response = openai.Completion.create(
-            engine="text-davinci-003",
-            prompt=dog_prompt.format(image=base64_image),
-            max_tokens=150
+def analyze_image(base64_image):
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4-turbo",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Analyze the following image that contains a dog. Any dog you see is named Freja and is. Then respond as if you were Freja and her intenal thoughts. If Freja isn't there respond with a descrition of what you see."},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                        },
+                    ],
+                }
+            ],
+            max_tokens=300,
         )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
 
-    freja_thoughts = freja_thoughts_response.choices[0].text.strip()
+from gtts import gTTS
+import os
 
-    return freja_thoughts
+def speak(text):
+    tts = gTTS(text=text, lang='en')
+    tts.save("output.mp3")
+    os.system("mpg321 output.mp3")  # You might need to install mpg321 or use another audio player
 
-
-    # Loop to capture image, analyze, and print result
-while True:
-    base64_image = capture_image()
-    dog_prompt = analyze_image_and_generate_prompt(base64_image)
-    freja_thoughts = freja_response(dog_prompt)
+def process_and_speak_response(response):    
+    # Extract the content within quotes
+    quoted_text = re.findall(r'["""]([^"""]*)["""]', response)
     
-    print(freja_thoughts)
+    if quoted_text:
+        freja_thoughts = quoted_text[0]
+        print("Freja's thoughts:", freja_thoughts)
+        speak(freja_thoughts)
+    else:
+        print("No quoted text found in the response.")
+        speak(response)
+
+# Loop to capture image, analyze, and print result
+for _ in range(1):
+    base64_image = capture_image()
+    if base64_image:
+        analysis = analyze_image(base64_image)
+        if analysis:
+            process_and_speak_response(analysis)
+        else:
+            print("Failed to analyze the image.")
+    else:
+        print("Failed to capture the image.")
+    
     # Add a break condition if needed, for example, press 'q' to quit the loop
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
 cv2.destroyAllWindows()
-
